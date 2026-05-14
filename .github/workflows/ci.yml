@@ -1,4 +1,5 @@
-name: CI
+# Sidebar name in GitHub Actions: clearer than a single "CI" label.
+name: Tests and crawler runs
 
 on:
   push:
@@ -25,6 +26,7 @@ on:
 
 jobs:
   test:
+    name: Test — pytest, Playwright, MongoDB
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_mode == 'tests' || github.event.inputs.run_mode == 'all'
     runs-on: ubuntu-latest
     services:
@@ -40,7 +42,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: CI context
+      - name: Print run context
         run: |
           echo "CI event: ${{ github.event_name }}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -81,10 +83,11 @@ jobs:
               raise SystemExit("MongoDB did not become ready in time")
           PY
 
-      - name: Run tests
+      - name: Test — run pytest
         run: python -m pytest -ra
 
   docker-e2e:
+    name: Run — Docker Compose (demo stack)
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.run_mode == 'docker-e2e' || github.event.inputs.run_mode == 'all') && github.event.inputs.crawler_target == 'demo'
     runs-on: ubuntu-latest
     steps:
@@ -100,10 +103,11 @@ jobs:
       - name: Validate compose file
         run: docker compose config
 
-      - name: Run stack (exit code from crawler)
+      - name: Run program — docker compose (crawler exit code)
         run: docker compose up --build --abort-on-container-exit --exit-code-from crawler
 
   crawl-practicetestautomation:
+    name: Run — crawler on practicetestautomation.com
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.run_mode == 'docker-e2e' || github.event.inputs.run_mode == 'all') && github.event.inputs.crawler_target == 'practicetestautomation'
     runs-on: ubuntu-latest
     services:
@@ -157,5 +161,5 @@ jobs:
               raise SystemExit("MongoDB did not become ready in time")
           PY
 
-      - name: Run crawler (real site)
+      - name: Run program — python main.py (real site)
         run: python main.py
