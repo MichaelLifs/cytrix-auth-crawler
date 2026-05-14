@@ -369,7 +369,7 @@ Docker Compose for the full stack sets `DEMO_BASE_URL=http://demo-app:8000` and 
 ### Expected behavior against the demo app
 
 - Login uses `CONFIG["login_steps"]` and saves `storage_state` to `sessions/scan_demo_app.json` when the active target is **demo**.
-- `/dashboard` is seeded at depth 0; `/profile` and `/settings` are discovered as `a[href]` links and crawled at depth 1.
+- `/dashboard` is seeded at depth 0. `/profile` and `/settings` are discovered from `/dashboard` and crawled at depth 1. `/profile/security` is linked from `/profile` and crawled at depth 2.
 - Each demo page also pulls `/static/app.js`, `/static/style.css`, and runs `fetch('/api/profile' | '/api/settings')`. These appear in `browser_requests` and are split into API vs. static counts.
 - `/logout` and `/delete-account` are filtered out by `exclude_patterns` and never enter the queue.
 - The crawler stops when every worker exhausts its idle attempts on an empty queue, or `max_pages` is reached, or `stop_event` is set.
@@ -428,34 +428,8 @@ Latest local result: **138 passed, 1 skipped** (one integration-related skip whe
 
 ## Final Sample Output
 
-Illustrative **demo** run (`scan_id=scan_demo_app`). Line order matches `main.py`: target line first, then crawl bootstrap and summary.
+Illustrative **demo** run (`scan_id=scan_demo_app`); four HTML pages (`/dashboard`, `/profile`, `/settings`, `/profile/security`). Exact browser/API/static and per-worker lines vary with scheduling; line order matches `main.py`: target line first, then crawl bootstrap and summary.
 
-```text
-Active target: demo (scan_id=scan_demo_app)
-CYTRIX Authenticated Browser Crawler
-Config validation: OK
-MongoDB connection: OK
-Indexes bootstrapped: OK
-Scan bootstrapped: scan_demo_app
-Session reuse: valid
-Login success: true
-Storage state: sessions/scan_demo_app.json
-Crawl finished (scan_id=scan_demo_app):
-  processed:       3
-  failed:          0
-  enqueued_links:  4
-  pages (stored): 3
-  links (stored): 3
-  forms (stored): 1
-  browser requests: 12
-  api requests: 2
-  static requests: 4
-  errors: 0
-  queue: pending=0 in_progress=0 done=3 failed=0 skipped=0
-  worker-0: processed=1 failed=0 enqueued_links=2 captured=5 api=1 static=2
-  worker-1: processed=1 failed=0 enqueued_links=1 captured=4 api=1 static=2
-  worker-2: processed=1 failed=0 enqueued_links=1 captured=3 api=0 static=0
-```
 
 Per-worker split varies with scheduling; queue totals are deterministic for a given DB state. For **practicetestautomation**, substitute `scan_cytrix_practicetestautomation` and its session path.
 
