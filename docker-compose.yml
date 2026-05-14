@@ -1,0 +1,58 @@
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  demo-app:
+    build:
+      context: ./demo_app
+    ports:
+      - "8000:8000"
+    environment:
+      DEMO_APP_SECRET_KEY: "demo-local-secret"
+      DEMO_APP_EMAIL: "admin@example.com"
+      DEMO_APP_PASSWORD: "Password123!"
+      DEMO_APP_HOST: "0.0.0.0"
+      DEMO_APP_PORT: "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/login', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  crawler:
+    build:
+      context: .
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      MONGO_DB_NAME: "cytrix_crawler"
+      DEMO_BASE_URL: "http://demo-app:8000"
+      CYTRIX_TARGET: "demo"
+      SESSION_STATE_DIR: "sessions"
+    volumes:
+      - ./sessions:/app/sessions
+    command: python main.py
+    depends_on:
+      mongo:
+        condition: service_healthy
+      demo-app:
+        condition: service_healthy
+
+volumes:
+  mongo_data:

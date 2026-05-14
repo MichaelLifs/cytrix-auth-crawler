@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cytrix-auth-crawler"
+version = "0.1.0"
+description = "CYTRIX Authenticated Browser Crawler assignment foundation."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "CYTRIX Candidate" }]
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

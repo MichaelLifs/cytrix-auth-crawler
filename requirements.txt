@@ -1,0 +1,6 @@
+playwright
+motor
+pymongo
+pytest
+pytest-asyncio
+python-dotenv
