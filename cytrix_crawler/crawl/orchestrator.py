@@ -227,6 +227,8 @@ async def run_crawl(
     summary["interrupted"] = interrupted
 
     final_status = "interrupted" if interrupted else "completed"
+    summary["scan_id"] = scan_id
+    summary["status"] = final_status
     await update_scan_summary(
         db,
         scan_id=scan_id,

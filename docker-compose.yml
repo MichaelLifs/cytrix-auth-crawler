@@ -45,6 +45,7 @@ services:
       DEMO_BASE_URL: "http://demo-app:8000"
       CYTRIX_TARGET: "demo"
       SESSION_STATE_DIR: "sessions"
+      PLAYWRIGHT_HEADLESS: "1"
     volumes:
       - ./sessions:/app/sessions
     command: python main.py

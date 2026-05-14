@@ -42,16 +42,23 @@ For step-by-step Docker and local instructions see [Running with Docker](#runnin
 
 ## Configuration
 
-Scan URLs, selectors, and credentials are **hardcoded** in `cytrix_crawler/config.py` as two dictionaries (`_CONFIG_DEMO`, `_CONFIG_PRACTICETESTAUTOMATION`). Per the assignment there is **no** `argparse`, no `sys.argv` parsing, and no HTTP API for configuration.
+Scan URLs, selectors, and credentials are **hardcoded** in `cytrix_crawler/config.py` as two dictionaries (`_CONFIG_DEMO`, `_CONFIG_PRACTICETESTAUTOMATION`). There is **no** `argparse`, no `sys.argv` parsing, and no HTTP API for configuration.
 
-**Exactly one target runs per process.** `main.py` binds `CONFIG` to either the demo or the practicetestautomation dict before the crawl starts — never both.
+**Module default:** The exported `CONFIG` binding is **`_CONFIG_DEMO` (demo)** so imports and tests that never call `main.py` see the local demo target.
+
+**Runtime override:** `main.py` calls `apply_crawl_target()` first; it sets `cytrix_crawler.config.CONFIG` to `config_for_target(...)` from `CYTRIX_TARGET`, the interactive prompt, or the non-interactive **demo** default. Only one target’s dict is active per process.
+
+| Target | `scan_id` (stable) | Session file (`SESSION_STATE_DIR`) |
+|--------|---------------------|-------------------------------------|
+| **demo** | `scan_demo_app` | `sessions/scan_demo_app.json` |
+| **practicetestautomation** | `scan_cytrix_practicetestautomation` | `sessions/scan_cytrix_practicetestautomation.json` |
 
 | Target | What it is | When to use it |
 |--------|------------|----------------|
-| **demo** | The small Flask **demo_app** in this repo: deterministic pages and credentials for safe CI/Docker/local testing. | Default for push/PR CI, Docker Compose, and local runs when you need a predictable target. |
-| **practicetestautomation** | [Practice Test Automation](https://practicetestautomation.com/) — a **real, public** HTML practice site (not affiliated with this repo). | Manual checks that the crawler works on a live site; **not** used on default CI. |
+| **demo** | Flask **demo_app** in this repo — deterministic pages and credentials for CI/Docker/local. | Default Compose/CI and safe local runs. |
+| **practicetestautomation** | [Practice Test Automation](https://practicetestautomation.com/) — **real, public** site (not affiliated with this repo). | Manual live-site checks; **not** default CI. |
 
-**Stable `scan_id`:** Each target has its own constant in `cytrix_crawler/config.py` (`SCAN_ID_DEMO`, `SCAN_ID_PRACTICETESTAUTOMATION`) embedded in that target’s config dict. `storage_state` files are named `{scan_id}.json` under `SESSION_STATE_DIR`. If you reuse one MongoDB database across targets or ad‑hoc `scan_id` edits, queue and artifact collections are keyed by `scan_id` — use a separate `MONGO_DB_NAME` or distinct `scan_id` when you need a clean split.
+All Mongo collections key by `scan_id`. To reset one target without touching the other, use another `MONGO_DB_NAME` or delete that scan’s documents; do not assume both targets share one `scan_id`.
 
 Real public sites may redirect to social/share URLs, show bot challenges (for example Cloudflare), or open pages that need user interaction. The crawler uses a **bounded** Playwright navigation timeout (30 seconds, `wait_until=domcontentloaded`), records navigation failures, applies the existing queue retry/`mark_failed` rules, and **always** closes each worker page in a `finally` block. A best-effort `networkidle` wait is also capped (a few seconds) so a noisy or hung network bar cannot stall the crawl indefinitely.
 
@@ -79,6 +86,7 @@ Operational wiring from the environment:
 | `DEMO_BASE_URL`      | `http://localhost:8000`      | Origin for **demo** URLs only; Compose uses `http://demo-app:8000` |
 | `CYTRIX_TARGET`      | *(unset)*                    | `demo` or `practicetestautomation` — non-interactive target selection |
 | `SESSION_STATE_DIR`  | `sessions`                   | Directory for Playwright `storage_state` |
+| `PLAYWRIGHT_HEADLESS`| *(unset)*                    | Set to `1` / `true` / `yes` so `config["headless"]` is true (Compose sets this for the crawler service) |
 
 **demo_app** credentials (see `demo_app/.env.example` and Compose env): email `admin@example.com`, password `Password123!`.
 
@@ -169,7 +177,7 @@ flowchart LR
 6. Persist the structured login result into `scans.login`.
 7. If login succeeded: `recover_stuck_items()`, seed the start URL, move scan to `running`, run the workers.
 8. For each page: attach the per-page network capture **before** `page.goto`, extract links/forms/metadata, briefly wait for `networkidle`, then flush captured exchanges.
-9. Aggregate the summary, persist into `scans.summary` (`completed` or `interrupted`), print it, and exit cleanly.
+9. Aggregate the summary (including `scan_id` and `status` inside the persisted `scans.summary` object, matching the top-level scan fields), persist via `update_scan_summary`, print it, and exit cleanly.
 
 ---
 
@@ -179,7 +187,7 @@ Collections:
 
 | Collection         | Purpose                                                    |
 |--------------------|------------------------------------------------------------|
-| `scans`            | Top-level scan record, `config_snapshot`, `login`, summary |
+| `scans`            | Top-level scan record (`status`, `config_snapshot`, `login`); `summary` embeds counters plus `scan_id` and `status` for self-contained snapshots |
 | `crawl_queue`      | Per-URL work items, lockable for safe concurrency          |
 | `pages`            | Crawled pages, enriched with metadata + counts             |
 | `links`            | Unique discovered links (normalized)                       |
@@ -201,7 +209,7 @@ Example `crawl_queue` document:
 
 ```json
 {
-  "scan_id": "scan_cytrix",
+  "scan_id": "scan_demo_app",
   "url": "http://localhost:8000/settings",
   "normalized_url": "http://localhost:8000/settings",
   "depth": 1,
@@ -297,7 +305,7 @@ This starts:
 
 Expected behavior:
 
-- the crawler service runs with `CYTRIX_TARGET=demo`, so it authenticates against `http://demo-app:8000` (`demo_app`) regardless of the default `CONFIG` line in `config.py`
+- the crawler service runs with `CYTRIX_TARGET=demo` and `PLAYWRIGHT_HEADLESS=1`, so Chromium is headless and the crawl uses `http://demo-app:8000` after `main.py` binds **demo** `CONFIG`
 - pages/links/forms/network requests land in MongoDB
 - a summary is printed and persisted to `scans.summary`
 - crawler exits with code `0` when the queue is drained
@@ -312,12 +320,12 @@ docker compose up --build crawler
 
 ## Running Locally
 
-The repo defaults `CONFIG` to **practicetestautomation.com** in `cytrix_crawler/config.py`. Pick one path:
+`cytrix_crawler/config.py` binds **`CONFIG` to demo** at import time; **`main.py` replaces `CONFIG`** after target selection (prompt or `CYTRIX_TARGET`). Pick one path:
 
-### A. Interactive terminal (default local flow)
+### A. Interactive terminal
 
 1. Start MongoDB.
-2. If you plan to choose **demo** at the prompt, start **demo_app** first (see below).
+2. If you choose **demo** at the prompt, start **demo_app** first (see below).
 3. Run:
 
    ```bash
@@ -328,7 +336,7 @@ The repo defaults `CONFIG` to **practicetestautomation.com** in `cytrix_crawler/
 
 4. Answer `1` for **demo** or `2` for **practicetestautomation** when prompted.
 
-Session files: `sessions/scan_cytrix.json` (same `scan_id` for both targets).
+Session files are **per `scan_id`**: `sessions/scan_demo_app.json` or `sessions/scan_cytrix_practicetestautomation.json`.
 
 ### B. Non-interactive / scripted (`CYTRIX_TARGET`)
 
@@ -360,7 +368,7 @@ Docker Compose for the full stack sets `DEMO_BASE_URL=http://demo-app:8000` and 
 
 ### Expected behavior against the demo app
 
-- Login uses the credentials in `CONFIG["login_steps"]` and saves `storage_state` to `sessions/scan_cytrix.json`.
+- Login uses `CONFIG["login_steps"]` and saves `storage_state` to `sessions/scan_demo_app.json` when the active target is **demo**.
 - `/dashboard` is seeded at depth 0; `/profile` and `/settings` are discovered as `a[href]` links and crawled at depth 1.
 - Each demo page also pulls `/static/app.js`, `/static/style.css`, and runs `fetch('/api/profile' | '/api/settings')`. These appear in `browser_requests` and are split into API vs. static counts.
 - `/logout` and `/delete-account` are filtered out by `exclude_patterns` and never enter the queue.
@@ -370,10 +378,10 @@ Docker Compose for the full stack sets `DEMO_BASE_URL=http://demo-app:8000` and 
 
 ## Tests
 
-Run the full test suite:
+Run the full test suite (CI uses `python -m pytest -ra`):
 
 ```bash
-pytest
+python -m pytest -ra
 ```
 
 **CI:** On `push` and `pull_request`, GitHub Actions runs **tests only** (`python -m pytest -ra` with a MongoDB service). No job hits the real public site by default.
@@ -396,7 +404,7 @@ Coverage includes:
 
 Unit tests run without MongoDB. **Mongo-backed integration tests** auto-skip when `MONGO_URI` (default `mongodb://localhost:27017`) is not reachable. Integration tests use `MONGO_TEST_DB_NAME` (default `cytrix_crawler_test`) and isolate per test with a random `scan_id`.
 
-Latest local result: **137 passed, 1 skipped** on Windows (signal-handler skip); integration tests skip when Mongo is unreachable.
+Latest local result: **138 passed, 1 skipped** (one integration-related skip when Mongo is unreachable, depending on environment).
 
 ---
 
@@ -413,23 +421,26 @@ Latest local result: **137 passed, 1 skipped** on Windows (signal-handler skip);
 
 - **Playwright Chromium missing:** `playwright install chromium`
 - **MongoDB unavailable:** `docker compose up -d mongo`
-- **`processed=0` on rerun:** that means resume worked — the previous run completed every queue item and there is nothing left to do. To force a fresh crawl, use another `MONGO_DB_NAME`, clear the scan in MongoDB, or change `SCAN_ID` in `config.py` (normally you keep `scan_cytrix`).
+- **`processed=0` on rerun:** resume worked — the queue was already drained. For a fresh crawl for that target, use another `MONGO_DB_NAME`, delete the scan’s data in MongoDB, or change that target’s `scan_id` constant in `config.py` (only if you accept a new identity for queue/pages/requests).
 - **`docker compose up` hangs on `demo-app` healthcheck:** confirm the demo app is reachable on `http://127.0.0.1:8000/login` and that nothing else owns the port.
 
 ---
 
 ## Final Sample Output
 
+Illustrative **demo** run (`scan_id=scan_demo_app`). Line order matches `main.py`: target line first, then crawl bootstrap and summary.
+
 ```text
+Active target: demo (scan_id=scan_demo_app)
 CYTRIX Authenticated Browser Crawler
 Config validation: OK
 MongoDB connection: OK
 Indexes bootstrapped: OK
-Scan bootstrapped: scan_cytrix
+Scan bootstrapped: scan_demo_app
 Session reuse: valid
 Login success: true
-Storage state: sessions/scan_cytrix.json
-Crawl finished:
+Storage state: sessions/scan_demo_app.json
+Crawl finished (scan_id=scan_demo_app):
   processed:       3
   failed:          0
   enqueued_links:  4
@@ -446,7 +457,7 @@ Crawl finished:
   worker-2: processed=1 failed=0 enqueued_links=1 captured=3 api=0 static=0
 ```
 
-Per-worker counters vary depending on which worker claims which page first; queue totals are deterministic.
+Per-worker split varies with scheduling; queue totals are deterministic for a given DB state. For **practicetestautomation**, substitute `scan_cytrix_practicetestautomation` and its session path.
 
 ---
 
@@ -472,5 +483,5 @@ This is the intended tradeoff for crawler queue semantics and keeps the reviewer
 - [x] `.gitignore` excludes `sessions/`, `.env`, caches, and Playwright artifacts
 - [ ] No `.env` is tracked in git (`git ls-files .env` returns nothing)
 - [ ] `sessions/` is not tracked in git (`git ls-files sessions` returns nothing)
-- [ ] Target selection behavior understood (`python main.py` prompt or `CYTRIX_TARGET`; stable `scan_cytrix`)
+- [ ] Target selection understood (`python main.py` prompt or `CYTRIX_TARGET`; stable per-target `scan_id` as in [Configuration](#configuration))
 - [ ] No temporary debug artifacts left in the tree
